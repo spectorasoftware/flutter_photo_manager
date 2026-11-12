@@ -6,6 +6,12 @@ that can be found in the LICENSE file. -->
 
 To know more about breaking changes, see the [Migration Guide][].
 
+## Unreleased (Spectora fork)
+
+**Fixes**
+
+- Fix Darwin thumbnail requests (`thumbnailDataWithSize`/`thumbnailDataWithOption`) blocking the iOS UI thread by encoding the image and building the reply on a background queue, as #1394 did for `loadFile`. The `PHImageManager` request itself still starts on the main thread (#1324). (MOB-3460)
+
 ## Unreleased
 
 **Features**

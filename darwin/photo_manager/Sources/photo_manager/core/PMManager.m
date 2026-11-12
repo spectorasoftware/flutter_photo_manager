@@ -55,6 +55,8 @@ static NSString *PMResourceTypeName(PHAssetResourceType type) {
     // Serial queue that serializes all requestIdMap mutations/reads.
     dispatch_queue_t _requestIdQueue;
     dispatch_queue_t _imageFileProcessingQueue;
+    // Serial queue that encodes thumbnails and builds their replies off the main thread.
+    dispatch_queue_t _thumbProcessingQueue;
 }
 
 - (instancetype)init {
@@ -69,6 +71,10 @@ static NSString *PMResourceTypeName(PHAssetResourceType type) {
         _imageFileProcessingQueue = dispatch_queue_create(
             "com.fluttercandies.photo_manager.imageFileProcessingQueue",
             DISPATCH_QUEUE_SERIAL
+        );
+        _thumbProcessingQueue = dispatch_queue_create(
+            "com.fluttercandies.photo_manager.thumbProcessingQueue",
+            dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0)
         );
     }
     return self;
@@ -581,16 +587,22 @@ static NSString *PMResourceTypeName(PHAssetResourceType type) {
                 return;
             }
             
-            NSData *imageData = [PMImageUtil convertToData:result formatType:option.format quality:option.quality];
-            if (imageData) {
-                id data = [innerStrongSelf.converter convertData:imageData];
-                [handler reply:data];
-                [innerStrongSelf notifySuccess:progressHandler];
-            } else {
-                [handler replyError:[NSString stringWithFormat:@"Failed to convert %@ to %u format.", asset.localIdentifier, option.format]];
-                [innerStrongSelf notifyProgress:progressHandler progress:lastProgress state:PMProgressStateFailed];
-            }
-            
+            // The result arrives on the main thread. Encode it and build the reply on a
+            // background queue so a burst of thumbnails can't block the UI (as #1394 did for loadFile).
+            dispatch_async(innerStrongSelf->_thumbProcessingQueue, ^{
+                if ([handler isReplied]) {
+                    return;
+                }
+                NSData *imageData = [PMImageUtil convertToData:result formatType:option.format quality:option.quality];
+                if (imageData) {
+                    id data = [innerStrongSelf.converter convertData:imageData];
+                    [handler reply:data];
+                    [innerStrongSelf notifySuccess:progressHandler];
+                } else {
+                    [handler replyError:[NSString stringWithFormat:@"Failed to convert %@ to %u format.", asset.localIdentifier, option.format]];
+                    [innerStrongSelf notifyProgress:progressHandler progress:lastProgress state:PMProgressStateFailed];
+                }
+            });
         }];
         
         [strongSelf addRequstId:[handler getCancelToken] requestId:requestId];
